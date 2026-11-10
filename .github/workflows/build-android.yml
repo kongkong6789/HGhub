@@ -56,8 +56,40 @@ jobs:
       - name: 初始化 Android 工程
         run: pnpm tauri android init --ci
 
-      - name: 构建 APK（debug 签名，可直接安装）
-        run: pnpm tauri android build --apk --debug --target aarch64
+      - name: 生成签名证书并注入签名配置
+        shell: bash
+        run: |
+          set -e
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/hghub.jks" -alias hghub \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass hghub123456 -keypass hghub123456 \
+            -dname "CN=HGhub,OU=Dev,O=HGhub,L=SZ,ST=GD,C=CN"
+          cat >> src-tauri/gen/android/app/build.gradle.kts <<'EOF'
+
+          android {
+              signingConfigs {
+                  create("release") {
+                      storeFile = file(System.getenv("KEYSTORE_PATH")!!)
+                      storePassword = System.getenv("KEYSTORE_PASSWORD")
+                      keyAlias = System.getenv("KEY_ALIAS")
+                      keyPassword = System.getenv("KEY_PASSWORD")
+                  }
+              }
+              buildTypes {
+                  getByName("release") {
+                      signingConfig = signingConfigs.getByName("release")
+                  }
+              }
+          }
+          EOF
+
+      - name: 构建 release APK（按 ABI 分包）
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/hghub.jks
+          KEYSTORE_PASSWORD: hghub123456
+          KEY_ALIAS: hghub
+          KEY_PASSWORD: hghub123456
+        run: pnpm tauri android build --apk --split-per-abi --target aarch64
 
       - name: 列出产物
         run: find src-tauri/gen/android/app/build/outputs -name "*.apk" -exec ls -lh {} \;
